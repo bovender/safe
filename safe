@@ -1,0 +1,91 @@
+#!/bin/bash
+#if [[ `id -u` -ne 0 ]]
+#then
+#        sudo $0 $*
+#        exit 0
+#fi
+
+show_help() {
+        echo "Open and mount or close and unmount a LUKS-encrypted container."
+        echo "Usage:"
+        echo "       $(basename $0) open|close|create CONTAINER_FILE"
+        echo "       $(basename $0) create CONTAINER_FILE SIZE_IN_MEGABYTES"
+}
+
+not_found() {
+        echo "ERROR: Did not find $1."
+}
+
+install_prerequisites() {
+        sudo dpkg -s cryptsetup >/dev/null || apt-get install cryptsetup && modprobe dm-crypt
+        # May need to use different package for releases other
+        # than Ubuntu 15.04.
+        sudo dpkg -s udisks2 >/dev/null || apt-get install udisks2
+}
+
+open() {
+        install_prerequisites
+        if [[ ! -e $1 ]]; then
+                not_found $1
+                exit 2
+        fi
+        LOOP=$(losetup --show -f "$1")
+        sudo cryptsetup luksOpen $LOOP "$1" || exit 3
+        udisksctl mount -b "/dev/mapper/$1"
+}
+
+close() {
+        install_prerequisites
+        MAPPER="/dev/mapper/$1"
+        if [[ ! -e $MAPPER ]]; then
+                not_found $MAPPER
+                exit 2
+        fi
+        udisksctl unmount -b "$MAPPER" || exit 3
+        sudo cryptsetup luksClose "$1"
+        losetup -d `losetup -j "$1" | awk -F ":" '{ print $1; }'`
+}
+
+create() {
+        if [[ -z $2 || $2 -eq 0 ]]; then
+                echo "Please enter the desired size of the container in MB."
+                exit 1
+        fi
+
+        install_prerequisites
+        if [[ -e $1 ]]; then
+                echo "ERROR: File $1 exists already."
+                echo "If you do want to replace this file, please remove it first."
+                exit 2
+        fi
+
+        echo "CREATING CONTAINER FILE, PLEASE BE PATIENT."
+        dd if=/dev/urandom of="$1" bs=1M count=$2 || exit 3
+        LOOP=$(losetup --show -f "$1")
+        sudo cryptsetup -c aes-xts-plain -y -s 512 luksFormat $LOOP || exit 4
+        sudo cryptsetup luksOpen $LOOP "$1" || exit 5
+        # Important to set the root_owner because otherwise
+        # the container will be mounted with root's ownership
+        mkfs.ext4 "/dev/mapper/$1" -L "$1" -E root_owner || exit 6
+        udisksctl mount -b "/dev/mapper/$1"
+}
+
+if [[ $# -eq 0 ]]; then
+        show_help
+        exit 1
+fi
+
+case "$1" in
+        "open")
+                open "$2"
+                ;;
+        "close")
+                close "$2"
+                ;;
+        "create")
+                create "$2" $3
+                ;;
+        *)
+                show_help
+                exit 1
+esac
