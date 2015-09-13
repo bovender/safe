@@ -29,20 +29,22 @@ open() {
                 not_found $1
                 exit 2
         fi
+        FILE_WITHOUT_PATH="${1##*/}"
         LOOP=$(losetup --show -f "$1")
-        sudo cryptsetup luksOpen $LOOP "$1" || exit 3
-        udisksctl mount -b "/dev/mapper/$1"
+        sudo cryptsetup luksOpen $LOOP "$FILE_WITHOUT_PATH" || exit 3
+        udisksctl mount -b "/dev/mapper/$FILE_WITHOUT_PATH"
 }
 
 close() {
         install_prerequisites
-        MAPPER="/dev/mapper/$1"
+        FILE_WITHOUT_PATH="${1##*/}"
+        MAPPER="/dev/mapper/$FILE_WITHOUT_PATH"
         if [[ ! -e $MAPPER ]]; then
                 not_found $MAPPER
                 exit 2
         fi
         udisksctl unmount -b "$MAPPER" || exit 3
-        sudo cryptsetup luksClose "$1"
+        sudo cryptsetup luksClose "$FILE_WITHOUT_PATH"
         losetup -d `losetup -j "$1" | awk -F ":" '{ print $1; }'`
 }
 
